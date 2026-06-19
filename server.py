@@ -264,4 +264,12 @@ async def rzp_get_confirmation(payment_id: str) -> dict:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(mcp.sse_app(), host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    from starlette.middleware.cors import CORSMiddleware
+    app = mcp.sse_app()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
