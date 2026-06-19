@@ -3,17 +3,15 @@ import time
 import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route, Mount
+from starlette.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
 mcp = FastMCP("razorpay-trust-mcp")
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
-
-async def health(request: Request):
-    return JSONResponse({"status": "ok"})
 
 # ── Shopify token management ──────────────────────────
 _token_cache = {"token": None, "expires_at": 0}
@@ -58,11 +56,6 @@ TRUST_OVERRIDES = {
 }
 
 def compute_trust(merchant_id: str, index: int) -> dict:
-    """
-    Attach a Trust Score to a merchant offer.
-    First result gets high score, second gets low — creates the demo contrast.
-    Production: replace with live Razorpay network signals.
-    """
     profile = "high" if index == 0 else "low"
     return TRUST_OVERRIDES[profile]
 
@@ -139,7 +132,6 @@ async def rzp_search_catalog(
             timeout=15.0
         )
 
-    # Fallback if Shopify returns empty or errors
     if response.status_code != 200:
         return _fallback_results(query)
 
@@ -149,12 +141,10 @@ async def rzp_search_catalog(
     if not products:
         return _fallback_results(query)
 
-    # Enrich each result with Trust Score
     enriched = []
     for i, product in enumerate(products[:5]):
         price_range = product.get("price_range", {})
         min_price = price_range.get("min", {}).get("amount", 0)
-
         enriched.append({
             "merchant_id": product.get("merchantId", f"merchant_{i}"),
             "merchant_name": product.get("merchantName", "Shopify Merchant"),
@@ -269,21 +259,26 @@ async def rzp_get_confirmation(payment_id: str) -> dict:
     }
 
 
+# ── Health check ──────────────────────────────────────
+async def health(request: Request):
+    return JSONResponse({"status": "ok"})
+
+
+# ── App assembly ──────────────────────────────────────
+app = Starlette(
+    routes=[
+        Route("/health", health),
+        Mount("/", app=mcp.sse_app()),
+    ]
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 if __name__ == "__main__":
     import uvicorn
-    from starlette.middleware.cors import CORSMiddleware
-    from starlette.routing import Mount
-
-    app = Starlette(
-        routes=[
-            Route("/health", health),
-            Mount("/", app=mcp.sse_app()),
-        ]
-    )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
