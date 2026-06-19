@@ -7,6 +7,13 @@ from mcp.server.fastmcp import FastMCP
 load_dotenv()
 
 mcp = FastMCP("razorpay-trust-mcp")
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
+async def health(request: Request):
+    return JSONResponse({"status": "ok"})
 
 # ── Shopify token management ──────────────────────────
 _token_cache = {"token": None, "expires_at": 0}
@@ -265,7 +272,14 @@ async def rzp_get_confirmation(payment_id: str) -> dict:
 if __name__ == "__main__":
     import uvicorn
     from starlette.middleware.cors import CORSMiddleware
-    app = mcp.sse_app()
+    from starlette.routing import Mount
+
+    app = Starlette(
+        routes=[
+            Route("/health", health),
+            Mount("/", app=mcp.sse_app()),
+        ]
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
