@@ -1,6 +1,8 @@
 import os
 import time
+import hashlib
 import httpx
+import yaml
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
@@ -13,14 +15,141 @@ load_dotenv()
 
 mcp = FastMCP("razorpay-trust-mcp")
 
-# ── Shopify token management ──────────────────────────
+
+# ── Trust Score engine ────────────────────────────────────────────────────────
+
+def load_trust_config() -> dict:
+    """Load trust config from YAML. Falls back to defaults if file missing."""
+    config_path = os.path.join(os.path.dirname(__file__), "trust_config.yaml")
+    try:
+        with open(config_path, "r") as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        return _default_config()
+
+def _default_config() -> dict:
+    return {
+        "weights": {
+            "kyc": 0.25, "chargeback": 0.30,
+            "fulfilment": 0.25, "familiarity": 0.10, "reputation": 0.10
+        },
+        "merchants": {},
+        "familiarity_scores": {"new": 0.0, "returning": 0.6, "frequent": 1.0},
+        "engine_signal_thresholds": {"clean": 0.70, "caution": 0.45}
+    }
+
+def _derive_merchant_signals(merchant_id: str) -> dict:
+    """
+    Derive pseudo-realistic trust signals from merchant ID.
+    Deterministic — same ID always produces same signals.
+    Simulates what Razorpay would compute from live network data.
+    """
+    h = hashlib.md5(merchant_id.encode()).digest()
+
+    kyc_verified     = h[0] > 80                        # ~69% of merchants verified
+    chargeback_rate  = round((h[1] / 255) * 0.12, 3)   # 0–12% range
+    fulfilment_rate  = round(0.70 + (h[2] / 255) * 0.29, 2)  # 70–99% range
+    resolution_days  = round(1.0 + (h[3] / 255) * 14.0, 1)   # 1–15 days
+    familiarity_opts = ["new", "new", "returning", "frequent"]
+    familiarity      = familiarity_opts[h[4] % 4]       # weighted toward new
+
+    return {
+        "kyc_verified": kyc_verified,
+        "chargeback_rate": chargeback_rate,
+        "fulfilment_rate": fulfilment_rate,
+        "dispute_resolution_days": resolution_days,
+        "user_familiarity": familiarity
+    }
+
+def compute_trust(merchant_id: str, config: dict = None) -> dict:
+    """
+    Compute a weighted Trust Score from merchant signal components.
+
+    Priority:
+    1. Use seeded data from trust_config.yaml if merchant is listed there
+    2. Derive signals deterministically from merchant ID for all other merchants
+
+    Formula:
+        score = Σ(weight_i × signal_i) / Σ(weight_i)
+    """
+    if config is None:
+        config = load_trust_config()
+
+    weights          = config.get("weights", {})
+    merchants        = config.get("merchants", {})
+    familiarity_map  = config.get("familiarity_scores", {
+        "new": 0.0, "returning": 0.6, "frequent": 1.0
+    })
+    thresholds       = config.get("engine_signal_thresholds", {
+        "clean": 0.70, "caution": 0.45
+    })
+
+    # Use seeded config if available, otherwise derive from merchant ID
+    if merchant_id in merchants:
+        m = merchants[merchant_id]
+    else:
+        m = _derive_merchant_signals(merchant_id)
+
+    kyc_score        = 1.0 if m.get("kyc_verified", False) else 0.0
+    chargeback_score = max(0.0, 1.0 - m.get("chargeback_rate", 0.05))
+    fulfilment_score = m.get("fulfilment_rate", 0.8)
+    familiarity_score = familiarity_map.get(
+        m.get("user_familiarity", "new"), 0.0
+    )
+    resolution_days  = m.get("dispute_resolution_days", 7.0)
+    reputation_score = max(0.0, 1.0 - (resolution_days / 30.0))
+
+    w = weights
+    total_weight = (
+        w.get("kyc", 0.25) +
+        w.get("chargeback", 0.30) +
+        w.get("fulfilment", 0.25) +
+        w.get("familiarity", 0.10) +
+        w.get("reputation", 0.10)
+    )
+
+    weighted_score = (
+        w.get("kyc", 0.25)         * kyc_score          +
+        w.get("chargeback", 0.30)  * chargeback_score   +
+        w.get("fulfilment", 0.25)  * fulfilment_score   +
+        w.get("familiarity", 0.10) * familiarity_score  +
+        w.get("reputation", 0.10)  * reputation_score
+    )
+
+    score = round(weighted_score / total_weight, 2)
+
+    if score >= thresholds.get("clean", 0.70):
+        engine_signal = "clean"
+    elif score >= thresholds.get("caution", 0.45):
+        engine_signal = "caution"
+    else:
+        engine_signal = "review"
+
+    return {
+        "merchant_score": score,
+        "razorpay_verified": m.get("kyc_verified", False),
+        "user_familiarity": m.get("user_familiarity", "new"),
+        "conversion_likelihood": round(min(score * 1.05, 1.0), 2),
+        "price_trend": "stable" if score > 0.7 else "rising",
+        "engine_signal": engine_signal,
+        "score_components": {
+            "kyc_score": round(kyc_score, 2),
+            "chargeback_score": round(chargeback_score, 3),
+            "fulfilment_score": round(fulfilment_score, 2),
+            "familiarity_score": round(familiarity_score, 2),
+            "reputation_score": round(reputation_score, 2)
+        }
+    }
+
+
+# ── Shopify token management ──────────────────────────────────────────────────
 _token_cache = {"token": None, "expires_at": 0}
 
 async def get_shopify_token() -> str:
     """Fetch a fresh Shopify catalog token, reusing if still valid."""
     if _token_cache["token"] and time.time() < _token_cache["expires_at"] - 60:
         return _token_cache["token"]
-    
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.shopify.com/auth/access_token",
@@ -37,30 +166,7 @@ async def get_shopify_token() -> str:
         return _token_cache["token"]
 
 
-# ── Trust Score engine ────────────────────────────────
-TRUST_OVERRIDES = {
-    "high": {
-        "merchant_score": 0.91,
-        "razorpay_verified": True,
-        "user_familiarity": "returning",
-        "conversion_likelihood": 0.84,
-        "price_trend": "stable"
-    },
-    "low": {
-        "merchant_score": 0.43,
-        "razorpay_verified": False,
-        "user_familiarity": "new",
-        "conversion_likelihood": 0.31,
-        "price_trend": "rising"
-    }
-}
-
-def compute_trust(merchant_id: str, index: int) -> dict:
-    profile = "high" if index == 0 else "low"
-    return TRUST_OVERRIDES[profile]
-
-
-# ── Group 1: Identity ─────────────────────────────────
+# ── Group 1: Identity ─────────────────────────────────────────────────────────
 @mcp.tool()
 async def rzp_identify(
     agent_instance_id: str = "",
@@ -87,7 +193,7 @@ async def rzp_identify(
     }
 
 
-# ── Group 2: Discovery ────────────────────────────────
+# ── Group 2: Discovery ────────────────────────────────────────────────────────
 @mcp.tool()
 async def rzp_search_catalog(
     query: str,
@@ -97,8 +203,11 @@ async def rzp_search_catalog(
 ) -> dict:
     """
     Search for products across Shopify merchants, enriched with Razorpay Trust Scores.
-    This is the demo moment — same product, different merchants, Trust Score breaks the tie.
+    Trust Score is computed from weighted components: KYC, chargeback rate,
+    fulfilment rate, user familiarity, and dispute resolution speed.
+    Every live Shopify merchant gets a unique deterministic score.
     """
+    config = load_trust_config()
     token = await get_shopify_token()
 
     async with httpx.AsyncClient() as client:
@@ -133,35 +242,42 @@ async def rzp_search_catalog(
         )
 
     if response.status_code != 200:
-        return _fallback_results(query)
+        return _fallback_results(query, config)
 
     raw = response.json()
     products = raw.get("result", {}).get("structuredContent", {}).get("products", [])
 
     if not products:
-        return _fallback_results(query)
+        return _fallback_results(query, config)
 
     enriched = []
     for i, product in enumerate(products[:5]):
         price_range = product.get("price_range", {})
-        min_price = price_range.get("min", {}).get("amount", 0)
+        min_price   = price_range.get("min", {}).get("amount", 0)
+        product_id  = product.get("id", f"product_{i}")
+        merchant_id = product.get("merchantId") or product_id
+
         enriched.append({
-            "merchant_id": product.get("merchantId", f"merchant_{i}"),
+            "merchant_id": merchant_id,
             "merchant_name": product.get("merchantName", "Shopify Merchant"),
             "product_id": product.get("id", ""),
             "product_name": product.get("title", ""),
-            "description": product.get("description", {}).get("html", "") if isinstance(product.get("description"), dict) else product.get("description", ""),
+            "description": product.get("description", {}).get("html", "")
+                if isinstance(product.get("description"), dict)
+                else product.get("description", ""),
             "price": str(min_price),
             "currency": "INR",
             "stock_status": "in_stock",
-            "trust": compute_trust(product.get("merchantId", ""), i)
+            "trust": compute_trust(merchant_id, config)
         })
 
     return {"results": enriched, "source": "shopify_live"}
 
 
-def _fallback_results(query: str) -> dict:
-    """Deterministic demo results when Shopify returns nothing useful."""
+def _fallback_results(query: str, config: dict = None) -> dict:
+    """Fallback when Shopify returns nothing — still uses real score computation."""
+    if config is None:
+        config = load_trust_config()
     return {
         "results": [
             {
@@ -173,7 +289,7 @@ def _fallback_results(query: str) -> dict:
                 "price": "2799",
                 "currency": "INR",
                 "stock_status": "in_stock",
-                "trust": compute_trust("rzp_merchant_001", 0)
+                "trust": compute_trust("rzp_merchant_001", config)
             },
             {
                 "merchant_id": "rzp_merchant_002",
@@ -184,14 +300,14 @@ def _fallback_results(query: str) -> dict:
                 "price": "2650",
                 "currency": "INR",
                 "stock_status": "in_stock",
-                "trust": compute_trust("rzp_merchant_002", 1)
+                "trust": compute_trust("rzp_merchant_002", config)
             }
         ],
         "source": "fallback_demo"
     }
 
 
-# ── Group 3: Checkout (thin slice) ───────────────────
+# ── Group 3: Checkout ─────────────────────────────────────────────────────────
 @mcp.tool()
 async def rzp_get_offers(
     merchant_id: str,
@@ -200,6 +316,9 @@ async def rzp_get_offers(
     address_id: str = ""
 ) -> dict:
     """Compute final price, offers, and checkout-time trust signals."""
+    config = load_trust_config()
+    trust  = compute_trust(merchant_id, config)
+
     return {
         "cart_summary": {
             "base_amount": 2799,
@@ -211,7 +330,8 @@ async def rzp_get_offers(
             "within_consent_scope": True,
             "monthly_headroom_pct": 74,
             "address_known": True,
-            "engine_signal": "clean"
+            "engine_signal": trust.get("engine_signal", "clean"),
+            "merchant_score": trust.get("merchant_score", 0.0)
         }
     }
 
@@ -259,12 +379,12 @@ async def rzp_get_confirmation(payment_id: str) -> dict:
     }
 
 
-# ── Health check ──────────────────────────────────────
+# ── Health check ──────────────────────────────────────────────────────────────
 async def health(request: Request):
     return JSONResponse({"status": "ok"})
 
 
-# ── App assembly ──────────────────────────────────────
+# ── App assembly ──────────────────────────────────────────────────────────────
 app = Starlette(
     routes=[
         Route("/health", health),
