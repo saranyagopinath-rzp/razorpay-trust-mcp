@@ -1,0 +1,54 @@
+# ── Trust Score Configuration ─────────────────────────────────────────────────
+# Adjust weights to change how each signal influences the final score.
+# All weights are relative — they don't need to sum to 1.
+# Merchant seed data simulates Razorpay network signals for the demo.
+
+weights:
+  kyc:          0.25    # Is the merchant KYC verified? Binary signal, high weight.
+  chargeback:   0.30    # Low chargeback rate = high trust. Most predictive signal.
+  fulfilment:   0.25    # Order fulfilment success rate.
+  familiarity:  0.10    # Has this user transacted with this merchant before?
+  reputation:   0.10    # Dispute resolution speed proxy.
+
+# ── Merchant seed data ────────────────────────────────────────────────────────
+# Each merchant has raw signal values (0-1 scale).
+# These simulate what Razorpay would compute from live transaction data.
+# Add/edit merchants here to control demo results.
+
+merchants:
+  rzp_merchant_001:
+    name: "Sportswear India"
+    kyc_verified: true          # 1.0
+    chargeback_rate: 0.008      # Very low → score = 1 - 0.008 = 0.992
+    fulfilment_rate: 0.96       # 96% orders fulfilled
+    dispute_resolution_days: 1.2  # Fast resolution → score = 1 - (1.2/30) = 0.96
+    user_familiarity: "returning"  # new=0.0, returning=0.6, frequent=1.0
+
+  rzp_merchant_002:
+    name: "Deals4All"
+    kyc_verified: false         # 0.0 — unverified, big penalty
+    chargeback_rate: 0.089      # High → score = 1 - 0.089 = 0.911, but KYC drags it down
+    fulfilment_rate: 0.71       # 71% — below average
+    dispute_resolution_days: 8.5  # Slow
+    user_familiarity: "new"
+
+  rzp_merchant_003:
+    name: "RunFast Sports"
+    kyc_verified: true
+    chargeback_rate: 0.021
+    fulfilment_rate: 0.89
+    dispute_resolution_days: 2.1
+    user_familiarity: "frequent"
+
+# ── Familiarity mapping ───────────────────────────────────────────────────────
+familiarity_scores:
+  new:       0.0
+  returning: 0.6
+  frequent:  1.0
+
+# ── Thresholds for engine_signal ─────────────────────────────────────────────
+# Used in rzp_get_offers to pre-signal whether HITL is likely.
+engine_signal_thresholds:
+  clean:   0.70    # score >= 0.70 → clean
+  caution: 0.45    # 0.45 <= score < 0.70 → caution
+                   # score < 0.45 → review
