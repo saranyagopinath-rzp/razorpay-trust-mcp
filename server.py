@@ -353,10 +353,77 @@ async def health(request: Request):
     return JSONResponse({"status": "ok"})
 
 
+# ── REST wrappers for the browser frontend ────────────────────────────────────
+# These call the same tool functions above, but over plain POST + JSON so the
+# demo frontend doesn't need to speak the MCP/SSE protocol. They must be
+# registered BEFORE the Mount("/") catch-all, or that mount swallows them.
+
+async def rest_identify(request: Request):
+    body = await request.json()
+    result = await rzp_identify(
+        agent_instance_id=body.get("agent_instance_id", "demo_instance"),
+        agent_id=body.get("agent_id", ""),
+        phone=body.get("phone", ""),
+    )
+    return JSONResponse(result)
+
+async def rest_search(request: Request):
+    body = await request.json()
+    result = await rzp_search_catalog(
+        query=body.get("query", ""),
+        user_id_hash=body.get("user_id_hash", ""),
+        category=body.get("category", ""),
+        location=body.get("location", ""),
+    )
+    return JSONResponse(result)
+
+async def rest_offers(request: Request):
+    body = await request.json()
+    result = await rzp_get_offers(
+        merchant_id=body.get("merchant_id", ""),
+        user_id_hash=body.get("user_id_hash", "usr_hash_demo_001"),
+        cart=body.get("cart", []),
+        address_id=body.get("address_id", ""),
+    )
+    return JSONResponse(result)
+
+async def rest_create_checkout(request: Request):
+    body = await request.json()
+    result = await rzp_create_checkout(
+        merchant_id=body.get("merchant_id", ""),
+        agent_instance_id=body.get("agent_instance_id", "demo_instance"),
+        cart=body.get("cart", []),
+        address_id=body.get("address_id", ""),
+        applied_offer_id=body.get("applied_offer_id", ""),
+    )
+    return JSONResponse(result)
+
+async def rest_execute_payment(request: Request):
+    body = await request.json()
+    result = await rzp_execute_payment(
+        session_id=body.get("session_id", ""),
+        instrument_id=body.get("instrument_id", "hdfc_debit_upi"),
+    )
+    return JSONResponse(result)
+
+async def rest_confirmation(request: Request):
+    body = await request.json()
+    result = await rzp_get_confirmation(
+        payment_id=body.get("payment_id", ""),
+    )
+    return JSONResponse(result)
+
+
 # ── App assembly ──────────────────────────────────────────────────────────────
 app = Starlette(
     routes=[
         Route("/health", health),
+        Route("/api/identify", rest_identify, methods=["POST"]),
+        Route("/api/search", rest_search, methods=["POST"]),
+        Route("/api/offers", rest_offers, methods=["POST"]),
+        Route("/api/create_checkout", rest_create_checkout, methods=["POST"]),
+        Route("/api/execute_payment", rest_execute_payment, methods=["POST"]),
+        Route("/api/confirmation", rest_confirmation, methods=["POST"]),
         Mount("/", app=mcp.sse_app()),
     ]
 )
