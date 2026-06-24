@@ -179,7 +179,10 @@ async def rzp_search_catalog(
     Every live Shopify merchant gets a unique deterministic score.
     """
     config = load_trust_config()
-    token  = await get_shopify_token()
+    try:
+        token = await get_shopify_token()
+    except Exception:
+        return _fallback_results(query, config)
 
     async with httpx.AsyncClient(verify=False) as client:
         response = await client.post(
