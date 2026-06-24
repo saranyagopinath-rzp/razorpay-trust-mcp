@@ -241,7 +241,11 @@ async def rzp_search_catalog(
         min_price = 0
         price_range = product.get("price_range") or {}
         if price_range:
-            min_price = price_range.get("min", {}).get("amount", 0)
+            raw_amount = price_range.get("min", {}).get("amount", 0)
+            try:
+                min_price = round(float(raw_amount) / 100, 2)
+            except (TypeError, ValueError):
+                min_price = 0
 
         product_id  = product.get("id", f"product_{i}")
         merchant_id = product.get("merchantId") or product.get("merchant_id") or product_id
