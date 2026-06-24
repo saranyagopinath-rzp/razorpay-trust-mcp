@@ -177,68 +177,85 @@ async def rzp_search_catalog(
     Trust Score is computed from weighted components: KYC, chargeback rate,
     fulfilment rate, user familiarity, and dispute resolution speed.
     Every live Shopify merchant gets a unique deterministic score.
+
+    Auth note: Shopify Global Catalog MCP authenticates via the
+    meta.ucp-agent.profile URL in the request body — NOT an OAuth bearer token.
+    So there is no separate token call here.
     """
     config = load_trust_config()
-    try:
-        token = await get_shopify_token()
-    except Exception:
-        return _fallback_results(query, config)
 
-    async with httpx.AsyncClient(verify=False) as client:
-        response = await client.post(
-            "https://catalog.shopify.com/api/ucp/mcp",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "jsonrpc": "2.0",
-                "method": "tools/call",
-                "id": 1,
-                "params": {
-                    "name": "search_catalog",
-                    "arguments": {
-                        "meta": {
-                            "ucp-agent": {
-                                "profile": "https://shopify.dev/ucp/agent-profiles/examples/2026-04-08/valid-with-capabilities.json"
-                            }
-                        },
-                        "catalog": {
-                            "query": query,
-                            "context": {
-                                "intent": f"buyer looking for {query}"
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+            response = await client.post(
+                "https://catalog.shopify.com/api/ucp/mcp",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "id": 1,
+                    "params": {
+                        "name": "search_catalog",
+                        "arguments": {
+                            "meta": {
+                                "ucp-agent": {
+                                    "profile": "https://shopify.dev/ucp/agent-profiles/examples/2026-04-08/valid-with-capabilities.json"
+                                }
+                            },
+                            "catalog": {
+                                "query": query,
+                                "context": {
+                                    "address_country": "IN",
+                                    "intent": f"buyer looking for {query}"
+                                }
                             }
                         }
                     }
                 }
-            },
-            timeout=15.0
-        )
-
-    if response.status_code != 200:
+            )
+    except Exception as e:
+        # Network failure, timeout, DNS, SSL — degrade to demo data instead of 500.
+        print(f"[search_catalog] live fetch failed: {type(e).__name__}: {e}")
         return _fallback_results(query, config)
 
-    raw      = response.json()
-    products = raw.get("result", {}).get("structuredContent", {}).get("products", [])
+    if response.status_code != 200:
+        print(f"[search_catalog] non-200 from Shopify: {response.status_code}")
+        return _fallback_results(query, config)
+
+    try:
+        raw = response.json()
+        products = (
+            raw.get("result", {})
+               .get("structuredContent", {})
+               .get("products", [])
+        )
+    except Exception as e:
+        print(f"[search_catalog] could not parse Shopify response: {e}")
+        return _fallback_results(query, config)
 
     if not products:
         return _fallback_results(query, config)
 
     enriched = []
     for i, product in enumerate(products[:5]):
-        price_range = product.get("price_range", {})
-        min_price   = price_range.get("min", {}).get("amount", 0)
+        # price: UCP product shape varies; try price_range then variants then 0
+        min_price = 0
+        price_range = product.get("price_range") or {}
+        if price_range:
+            min_price = price_range.get("min", {}).get("amount", 0)
+
         product_id  = product.get("id", f"product_{i}")
-        merchant_id = product.get("merchantId") or product_id
+        merchant_id = product.get("merchantId") or product.get("merchant_id") or product_id
+
+        desc = product.get("description", "")
+        if isinstance(desc, dict):
+            desc = desc.get("html") or desc.get("plain") or ""
 
         enriched.append({
             "merchant_id": merchant_id,
-            "merchant_name": product.get("merchantName", "Shopify Merchant"),
+            "merchant_name": product.get("merchantName") or product.get("merchant_name") or "Shopify Merchant",
             "product_id": product_id,
             "product_name": product.get("title", ""),
-            "description": product.get("description", {}).get("html", "")
-                if isinstance(product.get("description"), dict)
-                else product.get("description", ""),
+            "description": desc,
             "price": str(min_price),
             "currency": "INR",
             "stock_status": "in_stock",
@@ -246,7 +263,6 @@ async def rzp_search_catalog(
         })
 
     return {"results": enriched, "source": "shopify_live"}
-
 
 def _fallback_results(query: str, config: dict = None) -> dict:
     if config is None:
