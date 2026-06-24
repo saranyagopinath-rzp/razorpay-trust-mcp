@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Razorpay Trust — Agent Demo</title>
+<style>
+  :root{
+    --ink:#0d1117; --paper:#fbfbf9; --line:#e3e1da; --muted:#6b6f76;
+    --clean:#137a4f; --caution:#b8730a; --review:#b42318;
+    --accent:#2b5cff; --accent-ink:#1a3fc4; --r:10px;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:var(--ink);background:var(--paper);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 80px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}
+  .mark{font-weight:700;letter-spacing:-.02em;font-size:18px} .mark span{color:var(--accent)}
+  .env{font-size:12px;color:var(--muted)} .env code{background:#eef0f3;padding:1px 6px;border-radius:5px}
+  .lede{color:var(--muted);margin:2px 0 26px;font-size:14px}
+  .search{display:flex;gap:8px;margin-bottom:8px}
+  .search input{flex:1;padding:13px 15px;border:1px solid var(--line);border-radius:var(--r);font-size:15px;background:#fff}
+  .search input:focus{outline:2px solid var(--accent);border-color:transparent}
+  .btn{border:1px solid var(--accent);background:var(--accent);color:#fff;padding:0 18px;
+    border-radius:var(--r);font-size:14px;font-weight:600;cursor:pointer}
+  .btn:hover{background:var(--accent-ink)} .btn[disabled]{opacity:.5;cursor:default}
+  .btn.ghost{background:#fff;color:var(--ink);border-color:var(--line)} .btn.ghost:hover{background:#f3f3f0}
+  .status{font-size:13px;color:var(--muted);min-height:20px;margin:4px 2px 18px}
+  .status.err{color:var(--review)}
+  .rail{display:flex;gap:6px;margin:0 0 22px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+  .rail b{font-weight:600} .rail .on{color:var(--accent)}
+  .card{border:1px solid var(--line);border-radius:var(--r);background:#fff;padding:16px;margin-bottom:12px;
+    display:grid;grid-template-columns:1fr auto;gap:14px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
+  .card:hover{border-color:var(--accent);box-shadow:0 1px 0 rgba(43,92,255,.18)}
+  .card .name{font-weight:600;letter-spacing:-.01em} .card .merch{font-size:13px;color:var(--muted);margin-top:2px}
+  .card .price{font-size:14px;margin-top:8px}
+  .score{display:flex;flex-direction:column;align-items:center;min-width:96px}
+  .dial{position:relative;width:72px;height:72px} .dial svg{transform:rotate(-90deg)}
+  .dial .val{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:20px;letter-spacing:-.03em}
+  .signal{margin-top:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:20px}
+  .sig-clean{color:var(--clean);background:#e6f4ec} .sig-caution{color:var(--caution);background:#fbf0dd}
+  .sig-review{color:var(--review);background:#fbe7e5}
+  .verified{font-size:11px;color:var(--clean);margin-top:5px;display:flex;align-items:center;gap:3px}
+  .breakdown{grid-column:1/-1;border-top:1px dashed var(--line);margin-top:6px;padding-top:12px}
+  .comp{display:grid;grid-template-columns:150px 1fr 44px;align-items:center;gap:10px;margin:5px 0;font-size:12px}
+  .comp .lab{color:var(--muted)} .bar{height:6px;background:#eef0f3;border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent);border-radius:6px}
+  .comp .n{text-align:right;font-variant-numeric:tabular-nums}
+  .panel{border:1px solid var(--line);border-radius:var(--r);background:#fff;padding:20px;margin-bottom:14px}
+  .panel h2{margin:0 0 4px;font-size:16px;letter-spacing:-.01em} .panel .sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0efe9;font-size:14px}
+  .row:last-child{border:0} .row .k{color:var(--muted)} .big{font-size:22px;font-weight:700;letter-spacing:-.02em}
+  .actions{display:flex;gap:8px;margin-top:16px}
+  .receipt .tick{width:44px;height:44px;border-radius:50%;background:var(--clean);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:10px}
+  a.dash{color:var(--accent);font-size:13px;text-decoration:none} a.dash:hover{text-decoration:underline}
+  .hide{display:none}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">Razorpay <span>Trust</span></div>
+    <div class="env">agent → <code id="envlabel"></code></div>
+  </header>
+  <p class="lede">An AI agent shops on your behalf — and shows its work. Every merchant carries a Trust Score the agent can read before it spends a rupee.</p>
+
+  <div class="rail" id="rail">
+    <b class="on" data-step="search">Search</b><span>›</span>
+    <b data-step="offers">Offer</b><span>›</span>
+    <b data-step="checkout">Checkout</b><span>›</span>
+    <b data-step="receipt">Receipt</b>
+  </div>
+
+  <section id="view-search">
+    <div class="search">
+      <input id="q" placeholder="Try: running shoes, coffee beans, desk lamp…" autocomplete="off" />
+      <button class="btn" id="go">Search</button>
+    </div>
+    <div class="status" id="status">Type a query and the agent will pull live products + trust signals.</div>
+    <div id="results"></div>
+  </section>
+
+  <section id="view-offers" class="hide"></section>
+  <section id="view-checkout" class="hide"></section>
+  <section id="view-receipt" class="hide"></section>
+</div>
+
+<script>
+// ---- config --------------------------------------------------------------- 
+// const BASE = "http://localhost:8000";                                   // local
+const BASE = "https://razorpay-trust-mcp-production.up.railway.app";        // railway
+document.getElementById("envlabel").textContent = BASE.replace(/^https?:\/\//,"");
+
+const state = { product:null, offer:null, session:null, payment:null };
+
+const $ = s => document.querySelector(s);
+function setStatus(m,e){const s=$("#status");s.textContent=m;s.classList.toggle("err",!!e);}
+function rail(step){document.querySelectorAll("#rail b").forEach(b=>b.classList.toggle("on",b.dataset.step===step));}
+function show(id){["search","offers","checkout","receipt"].forEach(v=>$("#view-"+v).classList.toggle("hide",v!==id));}
+
+async function call(path,payload){
+  const r=await fetch(BASE+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload||{})});
+  if(!r.ok) throw new Error("HTTP "+r.status+" on "+path);
+  return r.json();
+}
+
+// score arrives 0–1 from the server → render as 0–100
+const to100 = v => Math.round((typeof v==="number"?v:0)*100);
+function signalClass(s){s=(s||"").toLowerCase();return s==="clean"?"sig-clean":s==="caution"?"sig-caution":"sig-review";}
+function dialColor(p){return p>=70?"var(--clean)":p>=45?"var(--caution)":"var(--review)";}
+
+function scoreDial(pct){
+  const c=2*Math.PI*32, off=c*(1-pct/100), col=dialColor(pct);
+  return `<div class="dial"><svg width="72" height="72" viewBox="0 0 72 72">
+    <circle cx="36" cy="36" r="32" fill="none" stroke="#eef0f3" stroke-width="6"/>
+    <circle cx="36" cy="36" r="32" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round"
+      stroke-dasharray="${c}" stroke-dashoffset="${off}"/></svg>
+    <div class="val" style="color:${col}">${pct}</div></div>`;
+}
+
+const COMP_LABELS = {
+  kyc_score:"KYC verification", chargeback_score:"Chargeback safety",
+  fulfilment_score:"Fulfilment rate", familiarity_score:"User familiarity",
+  reputation_score:"Dispute resolution"
+};
+function breakdown(components){
+  if(!components) return "";
+  const rows=Object.entries(components).map(([k,v])=>{
+    const label=COMP_LABELS[k]||k.replace(/_/g," ");
+    const pct=Math.max(0,Math.min(100,to100(v)));
+    return `<div class="comp"><span class="lab">${label}</span>
+      <span class="bar"><i style="width:${pct}%"></i></span><span class="n">${pct}</span></div>`;
+  }).join("");
+  return `<div class="breakdown">${rows}</div>`;
+}
+
+function productCard(p){
+  const t = p.trust || {};
+  const pct = to100(t.merchant_score);
+  const card=document.createElement("div");
+  card.className="card";
+  card.innerHTML=`
+    <div>
+      <div class="name">${p.product_name||"Untitled product"}</div>
+      ${p.merchant_name?`<div class="merch">${p.merchant_name}</div>`:""}
+      ${p.price?`<div class="price">₹${p.price}</div>`:""}
+    </div>
+    <div class="score">
+      ${scoreDial(pct)}
+      <span class="signal ${signalClass(t.engine_signal)}">${t.engine_signal||"review"}</span>
+      ${t.razorpay_verified?`<span class="verified">✓ KYC verified</span>`:""}
+    </div>
+    ${breakdown(t.score_components)}`;
+  card.addEventListener("click",()=>selectProduct(p));
+  return card;
+}
+
+// ---- flow -----------------------------------------------------------------
+async function doSearch(){
+  const q=$("#q").value.trim();
+  if(!q){setStatus("Enter a query first.");return;}
+  $("#go").disabled=true; setStatus("Agent calling rzp_search_catalog…"); $("#results").innerHTML="";
+  try{
+    await call("/api/identify",{agent_instance_id:"demo_instance"}).catch(()=>{});
+    const data=await call("/api/search",{query:q});
+    const items=data.results||[];
+    if(!items.length){setStatus("No results came back for that query.");return;}
+    const src=data.source==="fallback_demo"?" (fallback data — Shopify call didn't return live results)":"";
+    setStatus(`${items.length} merchants scored${src}. Tap one the agent should buy from.`);
+    items.forEach(p=>$("#results").appendChild(productCard(p)));
+  }catch(e){ setStatus(e.message+" — is the server running and CORS enabled?",true); }
+  finally{ $("#go").disabled=false; }
+}
+
+async function selectProduct(p){
+  state.product=p;
+  rail("offers"); show("offers");
+  const v=$("#view-offers");
+  v.innerHTML=`<div class="panel"><div class="sub">Loading offer…</div></div>`;
+  try{
+    const offer=await call("/api/offers",{merchant_id:p.merchant_id});
+    state.offer=offer;
+    const cs=offer.cart_summary||{};
+    const best=cs.best_offer||{};
+    const base=cs.base_amount, final=best.final_amount, disc=best.discount, code=best.code;
+    const t=offer.trust||{};
+    v.innerHTML=`
+      <div class="panel">
+        <h2>${p.product_name||""}</h2>
+        <div class="sub">Best offer + checkout-time trust signals, via rzp_get_offers</div>
+        ${base!=null?`<div class="row"><span class="k">Base amount</span><span>₹${base}</span></div>`:""}
+        ${disc!=null?`<div class="row"><span class="k">Offer applied${code?` (${code})`:""}</span><span>− ₹${disc}</span></div>`:""}
+        ${final!=null?`<div class="row"><span class="k">You pay</span><span class="big">₹${final}</span></div>`:""}
+        <div class="row"><span class="k">Within consent scope</span><span>${t.within_consent_scope?"Yes":"No"}</span></div>
+        <div class="row"><span class="k">Monthly headroom</span><span>${t.monthly_headroom_pct??"—"}%</span></div>
+        <div class="row"><span class="k">Checkout signal</span><span class="signal ${signalClass(t.engine_signal)}">${t.engine_signal||"clean"}</span></div>
+        <div class="actions">
+          <button class="btn ghost" id="back1">← Back</button>
+          <button class="btn" id="pay">Pay ₹${final??""}</button>
+        </div>
+      </div>`;
+    $("#back1").onclick=()=>{rail("search");show("search");};
+    $("#pay").onclick=()=>doCheckout(p, final);
+  }catch(e){
+    v.innerHTML=`<div class="panel"><div class="sub" style="color:var(--review)">Couldn't load offer: ${e.message}</div>
+      <div class="actions"><button class="btn ghost" id="back1">← Back</button></div></div>`;
+    $("#back1").onclick=()=>{rail("search");show("search");};
+  }
+}
+
+async function doCheckout(p, amount){
+  rail("checkout"); show("checkout");
+  const v=$("#view-checkout");
+  v.innerHTML=`<div class="panel"><h2>Processing</h2><div class="sub">Agent opening a session and executing payment…</div></div>`;
+  try{
+    const co=await call("/api/create_checkout",{merchant_id:p.merchant_id, agent_instance_id:"demo_instance"});
+    state.session=co;
+    const pay=await call("/api/execute_payment",{session_id:co.session_id});
+    state.payment=pay;
+    const conf=await call("/api/confirmation",{payment_id:pay.payment_id});
+    showReceipt(conf, p, pay.final_amount??amount);
+  }catch(e){
+    v.innerHTML=`<div class="panel"><div class="sub" style="color:var(--review)">Payment flow failed: ${e.message}</div>
+      <div class="actions"><button class="btn ghost" id="back2">← Back to results</button></div></div>`;
+    $("#back2").onclick=()=>{rail("search");show("search");};
+  }
+}
+
+function showReceipt(conf, p, amount){
+  rail("receipt"); show("receipt");
+  const dash=conf.dashboard_url, receipt=conf.receipt_url;
+  $("#view-receipt").innerHTML=`
+    <div class="panel receipt">
+      <div class="tick">✓</div>
+      <h2>Payment complete</h2>
+      <div class="sub">Returned by rzp_get_confirmation</div>
+      <div class="row"><span class="k">Order</span><span>${conf.order_summary||p.product_name||""}</span></div>
+      <div class="row"><span class="k">Merchant</span><span>${conf.merchant_name||p.merchant_name||""}</span></div>
+      <div class="row"><span class="k">Amount</span><span>₹${amount??""}</span></div>
+      <div class="row"><span class="k">Payment ID</span><span>${conf.payment_id||""}</span></div>
+      ${conf.estimated_delivery?`<div class="row"><span class="k">Delivery</span><span>${conf.estimated_delivery}</span></div>`:""}
+      ${receipt?`<div class="row"><span class="k">Receipt</span><a class="dash" href="${receipt}" target="_blank" rel="noopener">Open ↗</a></div>`:""}
+      ${dash?`<div class="row"><span class="k">Dashboard</span><a class="dash" href="${dash}" target="_blank" rel="noopener">Open ↗</a></div>`:""}
+      <div class="actions"><button class="btn" id="again">Run another search</button></div>
+    </div>`;
+  $("#again").onclick=()=>{
+    $("#q").value=""; $("#results").innerHTML="";
+    setStatus("Type a query and the agent will pull live products + trust signals.");
+    rail("search"); show("search"); $("#q").focus();
+  };
+}
+
+$("#go").addEventListener("click",doSearch);
+$("#q").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
+$("#q").focus();
+</script>
+</body>
+</html>
